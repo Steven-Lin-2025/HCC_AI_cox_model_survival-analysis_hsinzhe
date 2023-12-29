@@ -1,0 +1,308 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from lifelines import KaplanMeierFitter
+from lifelines import CoxPHFitter
+import os
+
+
+
+
+def mkdir(output_folder):
+   folder = os.path.exists(output_folder)  # 檢查路徑是否存在
+   if not folder:
+       os.makedirs(output_folder)
+       print(f'-----新資料夾 <{note}>  建立成功-----')
+
+
+   else:
+       return
+
+
+
+
+# load data ===============================================================================================
+path = r'H:/Gary/liver_cancer/excel_ori/'
+
+
+# filename = 'HCC_AI_FillNaN_10218_20210912'  # 原始資料
+# filename = 'HCC_AI_FillNaN_10292_20220213'  # 原始資料
+# filename = 'HCC_AI_FillNaN_9294_20220527'  # 原始資料
+filename = 'HCC_AI_FillNaN_14185_cox_data'  # 原始資料
+
+
+# 讀資料
+# data = pd.read_csv(path + filename + '.csv', index_col=0)
+data = pd.read_csv(path + filename + '.csv',  index_col=0)
+data = data.rename(columns={'Sex': 'Female'})
+
+
+# 存檔註記
+# note = '10292_20220223'
+#note = '9294_20220615'
+note = '9294_202301105'
+# 是否存excel
+save_xlsx = True
+
+
+# 是否存 Hazard Ratio 圖片
+save_fig = True
+if save_fig:
+   save_fig_folder = f'F:/Gary/liver_cancer/cox_model/{note}/'
+   save_fig_name = f'Hazard_Ratio_{note}.png'
+   mkdir(save_fig_folder)
+
+
+aa = list(data.columns)
+
+
+# 多類別特徵 轉成ONE HOT 編碼 =========================================================================================
+"""
+對 "Cox model" 而言,需要做 one hot 編碼的情況如下:
+● 多類別特徵,且類別彼此間無優劣關聯
+ 例如 Sex  1=男, 2=女, 3=超性別  性別之間並不存在優劣關係,則要做 one hot 編碼
+
+
+●20220610 重新定義多類別特徵
+多類別特徵HR都跟 "正常或最輕為類別" 比較
+醫療手段HR都跟 "安寧照護" 比較
+
+
+
+
+"""
+# Sex
+# df_Sex = data.loc[:, 'Sex']
+# df_Sex_onehot = pd.get_dummies(df_Sex)
+# df_Sex_onehot.columns = ['Sex_male', 'Sex_female']
+# data = pd.concat([data, df_Sex_onehot], axis=1)
+
+
+# BCLCstage
+df_BCLC = data.loc[:, 'BCLC stage ']
+df_BCLC_onehot = pd.get_dummies(df_BCLC)
+df_BCLC_onehot.columns = ['BCLC_stage_0', 'BCLC_stage_A', 'BCLC_stage_B', 'BCLC_stage_C', 'BCLC_stage_D']
+data = pd.concat([data, df_BCLC_onehot], axis=1)
+
+
+# Performance status (PS)
+df_PS = data.loc[:, 'Performance status (PS)']
+df_PS_onehot = pd.get_dummies(df_PS)
+df_PS_onehot.columns = ['PS_normal', 'PS_not good', 'PS_limited', 'PS_wheel chair', 'PS_bed']
+data = pd.concat([data, df_PS_onehot], axis=1)
+
+
+# Child-Pugh class
+df_Childpugh = data.loc[:, 'Child-Pugh class']
+df_Childpugh_onehot = pd.get_dummies(df_Childpugh)
+df_Childpugh_onehot.columns = ['Child-Pugh_A', 'Child-Pugh_B', 'Child-Pugh_C']
+data = pd.concat([data, df_Childpugh_onehot], axis=1)
+
+
+# Ascites
+df_Ascites = data.loc[:, 'Ascites']
+df_Ascites_onehot = pd.get_dummies(df_Ascites)
+df_Ascites_onehot.columns = ['Ascites_normal', 'Ascites_bad', 'Ascites_severe']
+data = pd.concat([data, df_Ascites_onehot], axis=1)
+
+
+# Encephalopathy
+df_Encephalopathy = data.loc[:, 'Encephalopathy']
+df_Encephalopathy_onehot = pd.get_dummies(df_Encephalopathy)
+df_Encephalopathy_onehot.columns = ['Encephalopathy_normal', 'Encephalopathy_bad', 'Encephalopathy_severe']
+data = pd.concat([data, df_Encephalopathy_onehot], axis=1)
+
+
+#  特徵 ==============================================================================================================
+# freqname = ['Sex', 'Age (year)', 'Tumor size (mm)', 'tumor number', 'bil lobes01', 'lymphonodules',
+#             'metastatsis', 'extrahepati spread (EHS)', 'macrovascular invasion (MVI)', 'BCLCstage',
+#             'Surgery', 'Liver transplantation', 'radiofrequency', 'TA(C)E', 'HAIC', 'Target therapy',
+#             'Radiotherapy', 'Best support care', 'mortality', 'survival time (m)', 'BMI', 'smoking', 'betel nut',
+#             'alcohol', 'AFP200', 'cirrhosis', 'childpugh', 'Creatine (mg/dl)', 'total bilirubin (mg/dl)', 'INR',
+#             'HBV', 'HCV']
+
+
+#  BCLCstage 做 one hot 編碼  , 新增'Immunotherapy'
+# freqname = ['Sex', 'Age (year)', 'Tumor size (mm)', 'tumor number', 'bil lobes01', 'lymphonodules',
+#             'metastatsis', 'extrahepati spread (EHS)', 'macrovascular invasion (MVI)', 'BCLC_stage_0', 'BCLC_stage_A',
+#             'BCLC_stage_B', 'BCLC_stage_C', 'BCLC_stage_D', 'Liver transplantation', 'Surgery', 'radiofrequency', 'TA(C)E',
+#             'Target therapy', 'Immunotherapy', 'HAIC', 'Radiotherapy', 'Best support care', 'BMI', 'smoking',
+#             'betel nut', 'alcohol', 'AFP200', 'cirrhosis', 'childpugh', 'Creatine (mg/dl)', 'total bilirubin (mg/dl)',
+#             'INR', 'HBV', 'HCV', 'mortality', 'survival time (m)']
+
+
+# 2022.02.13 版特徵
+#  one hot用
+# fname_onehot = ['Sex', 'Age ', 'Body mass index', 'HBV', 'HCV', 'Heavy alcoholism', 'Smoking',
+#                 'Betel nut', 'Maximal tumor size', 'Tumor number ', 'Tumor distribution', 'Lymphonodules',
+#                 'Metastatsis', 'Extrahepati spread (EHS)', 'Macrovascular invasion (MVI)', 'AFP',
+#                 'BCLC_stage_0', 'BCLC_stage_A', 'BCLC_stage_B', 'BCLC_stage_C', 'BCLC_stage_D',
+#                 'PS_normal', 'PS_not good', 'PS_limited', 'PS_wheel chair', 'PS_bed',
+#                 'Cirrhosis', 'Child-Pugh_0', 'Child-Pugh_B', 'Child-Pugh_C',
+#                 'Ascites_normal', 'Ascites_bad', 'Ascites_severe',
+#                 'Encephalopathy_normal', 'Encephalopathy_bad', 'Encephalopathy_severe',
+#                 'Total bilirubin', 'INR', 'Albumin', 'GPT', 'Creatine', 'Hemoglobin', 'Platelet count',
+#                 'Liver transplantation', 'Surgical resection', 'Radiofrequency', 'TACE', 'Target therapy',
+#                 'Immunotherapy', 'HAIC', 'Radiotherapy', 'Best support care', 'Cotreatment', 'DM', 'HTN',
+#                 'ESRD', 'CKD', 'Mortality', 'Survival time']
+
+
+# 完全沒有 one hot
+# freqname = ['Sex', 'Age ', 'Body mass index', 'HBV', 'HCV', 'Heavy alcoholism', 'Smoking', 'Betel nut',
+#             'Maximal tumor size ', 'Tumor number ', 'Tumor distribution', 'Lymphonodules', 'Metastatsis',
+#             'Extrahepati spread (EHS)', 'Macrovascular invasion (MVI)', 'AFP', 'BCLC stage ',
+#             'Performance status (PS)', 'Cirrhosis', 'Child-Pugh class', 'Ascites', 'Encephalopathy',
+#             'Total bilirubin', 'INR', 'Albumin', 'GPT', 'Creatine', 'Hemoglobin', 'Platelet count',
+#             'Liver transplantation', 'Surgical resection', 'Radiofrequency', 'TACE', 'Target therapy',
+#             'Immunotherapy', 'HAIC', 'Radiotherapy', 'Best support care', 'Cotreatment', 'DM', 'HTN',
+#             'ESRD', 'CKD', 'Mortality', 'Survival time']
+
+
+#  # 2022.06.10 one hot
+# fname_onehot = ['Sex_female', 'Age ', 'Body mass index', 'HBV', 'HCV', 'Heavy alcoholism', 'Smoking',
+#                 'Betel nut', 'Maximal tumor size', 'Tumor number ', 'Tumor distribution', 'Lymphonodules',
+#                 'Metastatsis', 'Extrahepati spread (EHS)', 'Macrovascular invasion (MVI)', 'AFP',
+#                 'BCLC_stage_A', 'BCLC_stage_B', 'BCLC_stage_C', 'BCLC_stage_D',
+#                 'PS_not good', 'PS_limited', 'PS_wheel chair', 'PS_bed',
+#                 'Cirrhosis', 'Child-Pugh_B', 'Child-Pugh_C',
+#                 'Ascites_bad', 'Ascites_severe',
+#                 'Encephalopathy_bad', 'Encephalopathy_severe',
+#                 'Total bilirubin', 'INR', 'Albumin', 'GPT', 'Creatine', 'Hemoglobin', 'Platelet count',
+#                 'Liver transplantation', 'Surgical resection', 'Radiofrequency', 'TACE', 'Target therapy',
+#                 'Immunotherapy', 'HAIC', 'Radiotherapy', 'Cotreatment', 'DM', 'HTN',
+#                 'ESRD', 'CKD', 'Mortality', 'Survival time']
+
+
+# 2022.06.14 one hot,  # 將連續數值資料轉換為類別資料
+fname_onehot = ['Female', 'Age_60', 'BMI_24', 'HBV', 'HCV',
+                'Maximal tumor size 5cm', 'Tumor number ', 'Tumor distribution', 'Lymphonodules',
+               'Metastatsis', 'Extrahepati spread (EHS)', 'Macrovascular invasion (MVI)', 'AFP_200',
+               'BCLC_stage_A', 'BCLC_stage_B', 'BCLC_stage_C', 'BCLC_stage_D',
+               'PS_not good', 'PS_limited', 'PS_wheel chair', 'PS_bed',
+               'Cirrhosis', 'Child-Pugh_B', 'Child-Pugh_C',
+               'Ascites_bad', 'Ascites_severe',
+               'Encephalopathy_bad', 'Encephalopathy_severe', 'Total bilirubin 1.5', 'INR 1.1', 'Albumin 3.5',
+               'GPT 40', 'Creatine 1.3', 'Hemoglobin 12', 'Platelet count 150',
+               'Liver transplantation', 'Surgical resection', 'Radiofrequency', 'TACE', 'Target therapy','2+4','3+4',
+               'Immunotherapy', 'HAIC', 'Radiotherapy', 'Cotreatment', 'DM', 'HTN',
+               'ESRD', 'CKD', 'Mortality', 'Survival time']
+# 2022.06.15 one hot,  # 將0614調整年齡分級
+fname_onehot = ['Female', 'Age_60', 'BMI_18', 'BMI_24-30', 'BMI_30', 'HBV', 'HCV',
+                'Maximal tumor size 5cm', 'Tumor number ', 'Tumor distribution', 'Lymphonodules',
+               'Metastatsis', 'Extrahepati spread (EHS)', 'Macrovascular invasion (MVI)', 'AFP_200',
+               'BCLC_stage_A', 'BCLC_stage_B', 'BCLC_stage_C', 'BCLC_stage_D',
+               'PS_not good', 'PS_limited', 'PS_wheel chair', 'PS_bed',
+               'Cirrhosis', 'Child-Pugh_B', 'Child-Pugh_C',
+               'Ascites_bad', 'Ascites_severe',
+               'Encephalopathy_bad', 'Encephalopathy_severe', 'Total bilirubin 1.5', 'INR 1.1', 'Albumin 3.5',
+               'GPT 40', 'Creatine 1.3', 'Hemoglobin 12', 'Platelet count 150',
+               'Liver transplantation', 'Surgical resection', 'Radiofrequency', 'TACE', 'Target therapy','2+4','3+4',
+               'Immunotherapy', 'HAIC', 'Radiotherapy', 'Cotreatment', 'DM', 'HTN',
+               'ESRD', 'CKD', 'Mortality', 'Survival time']
+
+
+
+
+
+
+
+
+##========== XGBoost預測存活時間當作特徵 ==========
+# freqname = ['mortality', 'survival time (m)', 'pred_as_feature']
+
+
+data_1 = data[fname_onehot].copy()
+# data_0 = data[freqname].copy()
+
+
+##== event table ===============================================================================================
+# kmf = KaplanMeierFitter()
+# kmf.fit(durations=data['survival time (m)'], event_observed=data['mortality'])
+# event_table = kmf.event_table
+
+
+
+
+# ##== organize the data ===============================================================================================
+# data.loc[data['mortality'] == 0, 'dead'] = 0
+# data.loc[data['mortality'] == 1, 'dead'] = 1
+
+
+# 資料做 one hot encoding
+print('Result with One-Hot Encoding')
+plt.figure()
+cph1 = CoxPHFitter(penalizer=00000000.1)  # 加一個極小的 penalizer 是因為資料有高度共線性,導致模型無法收斂
+cph1.fit(data_1, 'Survival time', 'Mortality')
+cph1.print_summary(decimals=3)
+cph1.plot(hazard_ratios=True)
+fig = plt.gcf()
+fig.set_size_inches(16, 9)  # 圖形大小
+fig.tight_layout()
+plt.grid()
+if save_fig:
+   plt.savefig(save_fig_folder + 'onehot' + save_fig_name)
+   t = 0
+else:
+   plt.show()
+
+
+# 資料沒做 one hot encoding
+# print('Result without One-Hot Encoding')
+# plt.figure()
+# cph0 = CoxPHFitter(penalizer=00000000.1)  # 加一個極小的 penalizer 是因為資料有高度共線性,導致模型無法收斂
+# cph0.fit(data_0, 'Survival time', 'Mortality')
+# cph0.print_summary(decimals=3)
+# cph0.plot(hazard_ratios=True)  # x軸單位設為 HR
+# fig = plt.gcf()
+# fig.set_size_inches(15, 9)  # 圖形大小
+# fig.tight_layout()
+# plt.grid()
+# if save_fig:
+#     plt.savefig(save_fig_folder + save_fig_name)
+# else:
+#     plt.show()
+
+
+# 取得顯著性特徵清單
+list_distinct_feature = []
+df_cph1 = cph1.summary.loc[:, ['exp(coef)', 'p']]
+df_cph1 = df_cph1.sort_values(by=['exp(coef)'])
+
+
+for i, p in enumerate(df_cph1['p']):
+   feature_now = df_cph1.index[i]
+   if p <= 0.05:
+       list_distinct_feature.append(feature_now)
+list_distinct_feature.reverse()
+
+
+# 只畫顯著性特徵 HR 圖
+plt.figure()
+cph1.plot(columns=list_distinct_feature, hazard_ratios=True)  # 只畫顯著性特徵 x軸單位設為 HR
+fig = plt.gcf()
+axes = plt.gca()
+axes.xaxis.label.set_size(16)
+axes.tick_params(axis='x', labelsize=16)
+axes.tick_params(axis='y', labelsize=16)
+fig.set_size_inches(16, 9)  # 圖形大小
+# plt.xticks(fontsize=16)
+fig.tight_layout()
+plt.grid()
+if save_fig:
+   plt.savefig(save_fig_folder + 'Distinct_Feature' + save_fig_name)
+else:
+   plt.show()
+
+
+# 存excel
+# 所有結果 存 xlsx 檔 save result --------------------------------------------------------------------------------------
+if save_xlsx:
+   xlsx_folder = f'F:/Gary/liver_cancer/cox_model/{note}/'
+   xlsx_name = f'cox_{note}.xlsx'
+   mkdir(xlsx_folder)
+
+
+   with pd.ExcelWriter(xlsx_folder + xlsx_name) as writer:
+       # 工作表：預測生存時間結果
+       cph1.summary.to_excel(writer, sheet_name='HR')
+
